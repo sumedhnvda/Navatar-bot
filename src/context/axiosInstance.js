@@ -1,7 +1,7 @@
 import axios from "axios";
 
 const axiosInstance = axios.create({
-  baseURL: process.env.REACT_APP_API_BASE_URL || "https://navtar-prepush.vercel.app",
+  baseURL: process.env.NEXT_PUBLIC_API_BASE_URL || "https://navtar-prepush.vercel.app",
   headers: {
     "Content-Type": "application/json",
   },

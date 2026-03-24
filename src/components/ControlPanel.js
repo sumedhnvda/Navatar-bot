@@ -5,8 +5,6 @@ import {
   Mic,
   MicOff,
   PhoneOff,
-  MessageSquareText,
-  Users,
   Expand,
   Shrink,
 } from "lucide-react";
@@ -58,20 +56,6 @@ const ControlPanel = ({
         </button>
       </div>
 
-      <div className="control-group secondary-controls">
-        <button
-          className={`control-button ${showChat ? "active" : ""}`}
-          onClick={onToggleChat}
-          title="Toggle chat"
-        >
-          <MessageSquareText />
-        </button>
-
-        <div className="participant-counter">
-          <Users />
-          {participantCount}
-        </div>
-      </div>
     </div>
   );
 };

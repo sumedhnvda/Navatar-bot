@@ -262,7 +262,7 @@ body {
 /* Control Panel Styles */
 .control-panel {
   display: flex;
-  justify-content: space-between;
+  justify-content: center;
   align-items: center;
   padding: 20px 30px;
   background: #2d2d2d;

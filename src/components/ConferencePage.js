@@ -8,6 +8,9 @@ const ConferencePage = ({ user, room, onLeave }) => {
   const [isVideoOn, setIsVideoOn] = useState(user.isVideoOn);
   const [isAudioOn, setIsAudioOn] = useState(user.isAudioOn);
   const [fullScreen, setFullScreen] = useState(false);
+  const [joinError, setJoinError] = useState(null);
+  const [isJoining, setIsJoining] = useState(true);
+  const [forceNoToken, setForceNoToken] = useState(false); // DEBUG BYPASS
 
   const clientRef = useRef(null);
   const localTracksRef = useRef({ videoTrack: null, audioTrack: null });
@@ -15,13 +18,31 @@ const ConferencePage = ({ user, room, onLeave }) => {
 
   // Initialize Agora and media streams
   useEffect(() => {
+    let isMounted = true;
+
     const initAgora = async () => {
       const client = AgoraRTC.createClient({ mode: "rtc", codec: "vp8" });
+      if (!isMounted) return;
       clientRef.current = client;
+
+      // Monitor connection state
+      client.on("connection-state-change", (curState, revState) => {
+        console.log(`[Agora] Connection state changed from ${revState} to ${curState}`);
+        if (curState === "FAILED") {
+          console.error("[Agora] Connection FAILED. Check network or token validity.");
+        }
+      });
+
+      // Monitor exceptions
+      client.on("exception", (event) => {
+        console.warn("[Agora] Exception event:", event.code, event.msg, event.uid);
+      });
 
       // Handle remote users joining
       client.on("user-published", async (remoteUser, mediaType) => {
+        console.log(`[Agora] User published: ${remoteUser.uid}, type: ${mediaType}`);
         await client.subscribe(remoteUser, mediaType);
+        if (!isMounted) return;
 
         if (mediaType === "video") {
           const remoteVideoTrack = remoteUser.videoTrack;
@@ -55,24 +76,28 @@ const ConferencePage = ({ user, room, onLeave }) => {
       });
 
       try {
-        const appId = process.env.REACT_APP_AGORA_APP_ID;
-        if (!appId) throw new Error("REACT_APP_AGORA_APP_ID is not defined in environment variables");
+        const appId = process.env.NEXT_PUBLIC_AGORA_APP_ID;
+        if (!appId) throw new Error("NEXT_PUBLIC_AGORA_APP_ID is not defined in environment variables");
 
         // Fetch token from Next.js backend
-        const backendUrl = process.env.REACT_APP_API_URL || "https://navtar-prepush.vercel.app";
+        const backendUrl = "";
         let token = null;
         let fetchedAppId = appId;
         const uidToJoin = user?.uid || Math.floor(Math.random() * 100000); // Need a positive integer for token generation
 
         try {
-          const res = await fetch(`${backendUrl}/api/agora/token?channelName=${room}&uid=${uidToJoin}`);
-          if (res.ok) {
-            const data = await res.json();
-            token = data.token;
-            if (data.appId) fetchedAppId = data.appId;
-            console.log("Successfully fetched token from backend:", { token: token ? "PRESENT" : "NULL", appId: fetchedAppId });
+          if (forceNoToken) {
+            console.log("[Agora] Bypassing token fetch due to debug toggle");
           } else {
-            console.error("Failed to fetch Agora token", await res.text());
+            const res = await fetch(`${backendUrl}/api/agora/token?channelName=${room}&uid=${uidToJoin}`);
+            if (res.ok) {
+              const data = await res.json();
+              token = data.token;
+              if (data.appId) fetchedAppId = data.appId;
+              console.log("Successfully fetched token from backend:", { token: token ? "PRESENT" : "NULL", appId: fetchedAppId });
+            } else {
+              console.error("Failed to fetch Agora token", await res.text());
+            }
           }
         } catch (fetchErr) {
           console.error("Error fetching Agora token:", fetchErr);
@@ -81,17 +106,25 @@ const ConferencePage = ({ user, room, onLeave }) => {
         console.log("Joining Agora channel with params:", { appId: fetchedAppId, room, hasToken: !!token, uidToJoin });
         // Join the channel with appId, room name, fetched token, and uid
         const uid = await client.join(fetchedAppId, room, token, uidToJoin);
+        if (!isMounted) { client.leave(); return; }
         console.log("Successfully joined Agora channel!", uid);
+        setIsJoining(false);
 
         // Try to get local tracks, but don't crash if we are on HTTP or denied permissions
         try {
           const [audioTrack, videoTrack] = await AgoraRTC.createMicrophoneAndCameraTracks();
+          if (!isMounted) {
+            audioTrack.stop(); audioTrack.close();
+            videoTrack.stop(); videoTrack.close();
+            return;
+          }
           localTracksRef.current = { audioTrack, videoTrack };
           
           if (!isVideoOn) await videoTrack.setEnabled(false);
           if (!isAudioOn) await audioTrack.setEnabled(false);
 
           await client.publish([audioTrack, videoTrack]);
+          console.log("[Agora] Successfully published local audio and video tracks!");
 
           setParticipants(new Map([
             ["local", {
@@ -122,6 +155,8 @@ const ConferencePage = ({ user, room, onLeave }) => {
 
       } catch (error) {
         console.error("Agora Error:", error);
+        setJoinError(error.message || "Unknown Agora Error");
+        setIsJoining(false);
       }
     };
 
@@ -142,6 +177,7 @@ const ConferencePage = ({ user, room, onLeave }) => {
     window.addEventListener('beforeunload', forceCleanupLocalHardware);
 
     return () => {
+      isMounted = false;
       window.removeEventListener('beforeunload', forceCleanupLocalHardware);
       const cleanup = async () => {
         forceCleanupLocalHardware();
@@ -153,7 +189,7 @@ const ConferencePage = ({ user, room, onLeave }) => {
       cleanup();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [room, user.name]);
+  }, [room, user.name, forceNoToken]);
 
   const toggleVideo = useCallback(async () => {
     const { videoTrack } = localTracksRef.current || {};
@@ -228,8 +264,37 @@ const ConferencePage = ({ user, room, onLeave }) => {
     }
   };
 
+  // Enforce strictly 1 local and 1 remote user for 1-to-1 layout
+  const getRenderedParticipants = () => {
+    const list = Array.from(participants.values());
+    const local = list.find(p => p.isMe);
+    const remotes = list.filter(p => !p.isMe);
+
+    const result = [];
+    if (local) result.push(local);
+    if (remotes.length > 0) {
+      result.push(remotes[0]); // Take only the first remote doctor
+    }
+    return result;
+  };
+
   return (
     <div ref={containerRef} className="conference-container">
+      {isJoining && (
+        <div style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.8)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000 }}>
+          <p style={{ color: 'white', fontSize: '1.5rem' }}>🔄 Connecting to Video Room...</p>
+        </div>
+      )}
+      {joinError && (
+        <div style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.9)', display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', zIndex: 1001, gap: '15px' }}>
+          <h2 style={{ color: '#f44336', fontSize: '2rem' }}>Connection Failed</h2>
+          <p style={{ color: '#ccc', maxWidth: '80%', textAlign: 'center' }}>{joinError}</p>
+          <div style={{ display: 'flex', gap: '10px' }}>
+            <button onClick={() => window.location.reload()} style={{ padding: '12px 24px', background: '#3b82f6', border: 'none', borderRadius: '5px', color: 'white', cursor: 'pointer', fontWeight: 'bold' }}>Retry</button>
+            <button onClick={() => { setJoinError(null); setForceNoToken(true); }} style={{ padding: '12px 24px', background: '#e11d48', border: 'none', borderRadius: '5px', color: 'white', cursor: 'pointer', fontWeight: 'bold' }}>Try without Token</button>
+          </div>
+        </div>
+      )}
       <div className="conference-header">
         <h1 className="conference-title">Conference Room: {room}</h1>
       </div>
@@ -240,7 +305,7 @@ const ConferencePage = ({ user, room, onLeave }) => {
               ParticipantGrid currently uses standard <video> tags and srcObject.
               We created raw MediaStreams out of Agora tracks in the state so it still works,
               but if ParticipantGrid breaks, we need to map over participants and call .play() */}
-          <ParticipantGrid participants={Array.from(participants.values())} />
+          <ParticipantGrid participants={getRenderedParticipants()} />
         </div>
       </div>
 
