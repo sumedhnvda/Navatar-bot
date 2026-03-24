@@ -1,0 +1,13 @@
+{
+  "files": {
+    "main.css": "/Navatar-bot/static/css/main.5815691c.css",
+    "main.js": "/Navatar-bot/static/js/main.c64fda6b.js",
+    "index.html": "/Navatar-bot/index.html",
+    "main.5815691c.css.map": "/Navatar-bot/static/css/main.5815691c.css.map",
+    "main.c64fda6b.js.map": "/Navatar-bot/static/js/main.c64fda6b.js.map"
+  },
+  "entrypoints": [
+    "static/css/main.5815691c.css",
+    "static/js/main.c64fda6b.js"
+  ]
+}
