@@ -23,8 +23,43 @@ export default function Home() {
 
   const [botStatus, setBotStatus] = useState("Offline");
   const [activeDoctorName, setActiveDoctorName] = useState(null);
+  const [activeDoctorPhotoUrl, setActiveDoctorPhotoUrl] = useState(null);
   const [joined, setJoined] = useState(false);
   const [upcomingBookings, setUpcomingBookings] = useState([]);
+  const [countdown, setCountdown] = useState("");
+
+  // Countdown timer effect
+  useEffect(() => {
+    if (upcomingBookings.length === 0) {
+      setCountdown("");
+      return;
+    }
+
+    const interval = setInterval(() => {
+      const next = upcomingBookings[0];
+      const [sH, sM] = (next.start_time || "00:00").split(':').map(Number);
+      const startDate = new Date(next.date);
+      startDate.setHours(sH, sM, 0, 0);
+      
+      const now = new Date();
+      const diff = startDate - now;
+
+      if (diff <= 0) {
+        setCountdown("Now");
+      } else {
+        const h = Math.floor(diff / (1000 * 60 * 60));
+        const m = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+        const s = Math.floor((diff % (1000 * 60)) / 1000);
+        
+        const hStr = h > 0 ? `${h}h ` : "";
+        const mStr = (m > 0 || h > 0) ? `${m}m ` : "";
+        const sStr = `${s}s`;
+        setCountdown(`${hStr}${mStr}${sStr}`);
+      }
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, [upcomingBookings]);
 
   // Load saved setup from localStorage
   useEffect(() => {
@@ -180,9 +215,15 @@ export default function Home() {
 
         if (data.status === "Engaged") {
           setActiveDoctorName(data.activeDoctorName || "Doctor");
+          if (data.activeDoctorId) {
+            getDoc(doc(db, "doctors", data.activeDoctorId)).then(snap => {
+              if (snap.exists()) setActiveDoctorPhotoUrl(snap.data().photoUrl);
+            }).catch(() => {});
+          }
           setJoined(true);
         } else {
           setActiveDoctorName(null);
+          setActiveDoctorPhotoUrl(null);
           setJoined(false);
         }
       }
@@ -202,80 +243,45 @@ export default function Home() {
       where("status", "==", "Booked")
     );
 
-    const unsubscribe = onSnapshot(q, (snapshot) => {
+    const unsubscribe = onSnapshot(q, async (snapshot) => {
       const now = new Date();
-      const sessions = snapshot.docs
-        .map(d => ({ id: d.id, ...d.data() }))
+      const rawSessions = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+
+      // Fetch doctor photos for all unique doctors in these bookings
+      const uniqueDoctorIds = [...new Set(rawSessions.map(s => s.doctorId).filter(id => !!id))];
+      const doctorMeta = {};
+      
+      try {
+        await Promise.all(uniqueDoctorIds.map(async (id) => {
+          const dSnap = await getDoc(doc(db, "doctors", id));
+          if (dSnap.exists()) {
+            doctorMeta[id] = dSnap.data().photoUrl;
+          }
+        }));
+      } catch (err) {
+        console.warn("Error fetching doctor metadata:", err);
+      }
+
+      const sessions = rawSessions
         .filter(b => {
           const [eH, eM] = (b.end_time || "23:59:00").split(':').map(Number);
           const endDate = new Date(b.date);
           endDate.setHours(eH, eM, 0, 0);
           return endDate > now;
         })
+        .map(b => ({ ...b, doctorPhotoUrl: doctorMeta[b.doctorId] || null }))
         .sort((a, b) => {
           if (a.date !== b.date) return a.date.localeCompare(b.date);
           return a.start_time.localeCompare(b.start_time);
         });
 
       setUpcomingBookings(sessions);
-
-      const activeSession = sessions.find(b => {
-        const [sH, sM] = (b.start_time || "00:00").split(':').map(Number);
-        const [eH, eM] = (b.end_time || "23:59").split(':').map(Number);
-        const startDate = new Date(b.date);
-        startDate.setHours(sH, sM, 0, 0);
-        const endDate = new Date(b.date);
-        endDate.setHours(eH, eM, 0, 0);
-        const isActive = now >= startDate && now <= endDate;
-        return isActive;
-      });
-
-      if (activeSession) {
-        console.log("[Auto-Join] Active session found:", activeSession.id);
-        setActiveDoctorName(activeSession.doctorName || "Doctor");
-        setJoined(true);
-        updateDoc(doc(db, "navatars", selectedBotId), { 
-          status: "Engaged",
-          activeDoctorId: activeSession.doctorId || null,
-          activeDoctorName: activeSession.doctorName || "Doctor"
-        }).catch(() => {});
-      }
     }, (err) => {
       console.error("Booking listener error:", err);
     });
 
     return () => unsubscribe();
   }, [setupStep, selectedBotId]);
-
-  useEffect(() => {
-    if (setupStep !== 2 || !selectedBotId || joined) return;
-
-    const interval = setInterval(() => {
-      const now = new Date();
-      const active = upcomingBookings.find(b => {
-        const [sH, sM] = (b.start_time || "00:00").split(':').map(Number);
-        const [eH, eM] = (b.end_time || "23:59").split(':').map(Number);
-        const startDate = new Date(b.date);
-        startDate.setHours(sH, sM, 0, 0);
-        const endDate = new Date(b.date);
-        endDate.setHours(eH, eM, 0, 0);
-        return now >= startDate && now <= endDate;
-      });
-
-      if (active) {
-        console.log("[Auto-Join Timer] Found active session:", active.id);
-        setActiveDoctorName(active.doctorName || "Doctor");
-        setJoined(true);
-        updateDoc(doc(db, "navatars", selectedBotId), { 
-          status: "Engaged",
-          activeDoctorId: active.doctorId || null,
-          activeDoctorName: active.doctorName || "Doctor"
-        }).catch(() => {});
-      }
-    }, 10000);
-
-    return () => clearInterval(interval);
-  }, [setupStep, selectedBotId, joined, upcomingBookings]);
 
   const handleResetSetup = async () => {
     if (selectedBotId) {
@@ -341,7 +347,14 @@ export default function Home() {
   }
 
   if (joined && selectedBotId) {
-    const user = { name: botName || `Navatar-${selectedBotId}`, email: `${selectedBotId}@navatar.com`, isVideoOn: true, isAudioOn: true };
+    const user = { 
+      name: botName || `Navatar-${selectedBotId}`, 
+      email: `${selectedBotId}@navatar.com`, 
+      isVideoOn: true, 
+      isAudioOn: true,
+      activeDoctorName,
+      activeDoctorPhotoUrl
+    };
     return <ConferencePage user={user} room={selectedBotId} onLeave={() => setJoined(false)} />;
   }
 
@@ -350,15 +363,46 @@ export default function Home() {
       <button onClick={handleResetSetup} style={styles.configBtn}><Settings size={18} /> Configure</button>
       <h1 style={{ fontSize: '2.5rem', marginBottom: '10px' }}>{botName || `Navatar-${selectedBotId}`}</h1>
       <p style={{ color: '#94a3b8', marginBottom: '40px' }}>ID: {selectedBotId} | {hospitalName}</p>
+      
       {upcomingBookings.length > 0 && (
-        <div style={{ width: '400px' }}>
-          <h4>📅 Upcoming Sessions ({upcomingBookings.length})</h4>
-          {upcomingBookings.slice(0, 5).map((b) => (
-            <div key={b.id} style={{ background: '#1e293b', padding: '12px', borderRadius: '10px', marginTop: '8px', display: 'flex', justifyContent: 'space-between' }}>
-              <div><b>Dr. {b.doctorName}</b><br/><small>{b.date}</small></div>
-              <div style={{ color: '#3b82f6' }}>{b.start_time} – {b.end_time}</div>
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '20px' }}>
+          {/* Featured Next Doctor Card */}
+          <div style={styles.nextDoctorCard}>
+            {upcomingBookings[0].doctorPhotoUrl ? (
+              <img src={upcomingBookings[0].doctorPhotoUrl} alt={upcomingBookings[0].doctorName} style={styles.nextDoctorPhoto} />
+            ) : (
+              <div style={styles.photoPlaceholder}><CircleUser size={32} /></div>
+            )}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+              <span style={{ color: '#3b82f6', fontSize: '0.8rem', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                {countdown && countdown !== "Now" ? `Starts in ${countdown}` : "Starting Soon"}
+              </span>
+              <h2 style={{ margin: 0, fontSize: '1.4rem' }}>Dr. {upcomingBookings[0].doctorName}</h2>
+              <p style={{ margin: 0, color: '#94a3b8', fontSize: '0.9rem' }}>{upcomingBookings[0].date} at {upcomingBookings[0].start_time}</p>
             </div>
-          ))}
+          </div>
+
+          {/* List of Other Bookings */}
+          <div style={{ width: '400px' }}>
+            <h4 style={{ color: '#94a3b8', marginBottom: '12px' }}>📅 Upcoming Sessions ({upcomingBookings.length - 1 < 0 ? 0 : upcomingBookings.length - 1})</h4>
+            {upcomingBookings.slice(1, 6).map((b) => (
+              <div key={b.id} style={styles.sessionItem}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                  {b.doctorPhotoUrl ? (
+                    <img src={b.doctorPhotoUrl} alt={b.doctorName} style={styles.smallPhoto} />
+                  ) : (
+                    <div style={styles.smallPhotoPlaceholder}><CircleUser size={16} /></div>
+                  )}
+                  <div>
+                    <b style={{ fontSize: '1rem' }}>Dr. {b.doctorName}</b>
+                    <br/>
+                    <small style={{ color: '#64748b' }}>{b.date}</small>
+                  </div>
+                </div>
+                <div style={{ color: '#3b82f6', fontWeight: '600' }}>{b.start_time}</div>
+              </div>
+            ))}
+          </div>
         </div>
       )}
     </div>
@@ -373,5 +417,61 @@ const styles = {
   input: { width: '100%', padding: '10px', borderRadius: '5px', border: '1px solid #334155', backgroundColor: '#1e293b', color: 'white' },
   button: { padding: '12px', borderRadius: '5px', border: 'none', backgroundColor: '#3b82f6', color: 'white', fontWeight: 'bold', cursor: 'pointer' },
   error: { color: '#ef4444', fontSize: '0.85rem' },
-  configBtn: { position: 'absolute', top: '20px', right: '20px', background: 'transparent', border: 'none', color: '#64748b', cursor: 'pointer', display: 'flex', gap: '5px' }
+  configBtn: { position: 'absolute', top: '20px', right: '20px', background: 'transparent', border: 'none', color: '#64748b', cursor: 'pointer', display: 'flex', gap: '5px' },
+  
+  // New Styles for Doctor Photos
+  nextDoctorCard: { 
+    width: '400px', 
+    background: 'linear-gradient(135deg, #1e293b 0%, #0f172a 100%)', 
+    padding: '20px', 
+    borderRadius: '16px', 
+    border: '1px solid #334155', 
+    display: 'flex', 
+    alignItems: 'center', 
+    gap: '20px',
+    boxShadow: '0 10px 25px -5px rgba(0, 0, 0, 0.3)'
+  },
+  nextDoctorPhoto: { 
+    width: '70px', 
+    height: '70px', 
+    borderRadius: '50%', 
+    objectFit: 'cover', 
+    border: '3px solid #3b82f6' 
+  },
+  photoPlaceholder: { 
+    width: '70px', 
+    height: '70px', 
+    borderRadius: '50%', 
+    backgroundColor: '#334155', 
+    display: 'flex', 
+    alignItems: 'center', 
+    justifyContent: 'center', 
+    color: '#64748b' 
+  },
+  sessionItem: { 
+    background: '#1e293b', 
+    padding: '14px', 
+    borderRadius: '12px', 
+    marginTop: '10px', 
+    display: 'flex', 
+    justifyContent: 'space-between', 
+    alignItems: 'center',
+    border: '1px solid #334155'
+  },
+  smallPhoto: { 
+    width: '40px', 
+    height: '40px', 
+    borderRadius: '50%', 
+    objectFit: 'cover' 
+  },
+  smallPhotoPlaceholder: { 
+    width: '40px', 
+    height: '40px', 
+    borderRadius: '50%', 
+    backgroundColor: '#334155', 
+    display: 'flex', 
+    alignItems: 'center', 
+    justifyContent: 'center', 
+    color: '#64748b' 
+  }
 };

@@ -295,8 +295,13 @@ const ConferencePage = ({ user, room, onLeave }) => {
           </div>
         </div>
       )}
-      <div className="conference-header">
-        <h1 className="conference-title">Conference Room: {room}</h1>
+      <div className="conference-header" style={{ opacity: 1, display: 'flex', alignItems: 'center', gap: '15px' }}>
+        {user.activeDoctorPhotoUrl && (
+          <img src={user.activeDoctorPhotoUrl} alt="" style={{ width: '40px', height: '40px', borderRadius: '50%', objectFit: 'cover', border: '2px solid #3b82f6' }} />
+        )}
+        <h1 className="conference-title">
+          {user.activeDoctorName ? `Meeting with Dr. ${user.activeDoctorName}` : `Conference Room: ${room}`}
+        </h1>
       </div>
 
       <div className="conference-main">
