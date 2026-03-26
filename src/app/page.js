@@ -176,7 +176,11 @@ export default function Home() {
         const botSnap = await getDoc(botRef);
         if (botSnap.exists()) {
           const data = botSnap.data();
-          if (data.status === "Engaged") {
+          // If status is Engaged (case-insensitive) OR if there's an active doctor (meaning a call was interrupted)
+          if (
+            (data.status && data.status.toLowerCase() === "engaged") || 
+            data.activeDoctorId
+          ) {
             currentStatus = "Engaged";
             activeDocId = data.activeDoctorId || null;
             activeDocName = data.activeDoctorName || null;
@@ -204,6 +208,36 @@ export default function Home() {
     }
   };
 
+  // Set status to Offline when tab is closed
+  useEffect(() => {
+    if (setupStep !== 2 || !selectedBotId) return;
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'hidden') {
+        // We could set it to offline here, but visibility change also happens when switching tabs.
+        // The user specifically asked for "when site gets closed".
+      }
+    };
+
+    const handleUnload = () => {
+      if (selectedBotId) {
+        // Use fetch with keepalive: true to ensure the request finishes after the tab is closed.
+        // Direct Firestore updates are async and often cancelled during tab closure.
+        fetch('/api/bot-status', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ botId: selectedBotId, status: 'Offline' }),
+          keepalive: true
+        }).catch(() => {});
+      }
+    };
+
+    window.addEventListener("beforeunload", handleUnload);
+    return () => {
+      window.removeEventListener("beforeunload", handleUnload);
+    };
+  }, [setupStep, selectedBotId]);
+
   useEffect(() => {
     if (setupStep !== 2 || !selectedBotId) return;
 
@@ -213,7 +247,7 @@ export default function Home() {
         const data = snapshot.data();
         setBotStatus(data.status);
 
-        if (data.status === "Engaged") {
+        if (data.status && data.status.toLowerCase() === "engaged") {
           setActiveDoctorName(data.activeDoctorName || "Doctor");
           if (data.activeDoctorId) {
             getDoc(doc(db, "doctors", data.activeDoctorId)).then(snap => {
@@ -282,6 +316,21 @@ export default function Home() {
 
     return () => unsubscribe();
   }, [setupStep, selectedBotId]);
+
+  const handleLeaveCall = async () => {
+    setJoined(false);
+    if (selectedBotId) {
+      try {
+        await updateDoc(doc(db, "navatars", selectedBotId), {
+          status: "Available",
+          activeDoctorId: null,
+          activeDoctorName: null
+        });
+      } catch (e) {
+        console.error("Error clearing call status:", e);
+      }
+    }
+  };
 
   const handleResetSetup = async () => {
     if (selectedBotId) {
@@ -355,7 +404,22 @@ export default function Home() {
       activeDoctorName,
       activeDoctorPhotoUrl
     };
-    return <ConferencePage user={user} room={selectedBotId} onLeave={() => setJoined(false)} />;
+    return <ConferencePage user={user} room={selectedBotId} onLeave={handleLeaveCall} />;
+  }
+
+  if (botStatus && botStatus.toLowerCase() === "offline" && setupStep === 2) {
+    return (
+      <div style={styles.container}>
+        <Bot size={80} style={{ marginBottom: '20px', color: '#64748b', opacity: 0.5 }} />
+        <h1 style={{ fontSize: '2.5rem', marginBottom: '10px' }}>Bot is Under Maintenance</h1>
+        <p style={{ color: '#94a3b8', fontSize: '1.2rem', marginBottom: '40px' }}>
+          This Navatar is currently offline for service.
+        </p>
+        <button onClick={handleResetSetup} style={{ ...styles.button, backgroundColor: '#475569' }}>
+          Reconnect / Configure
+        </button>
+      </div>
+    );
   }
 
   return (

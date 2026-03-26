@@ -126,8 +126,9 @@ const ConferencePage = ({ user, room, onLeave }) => {
           await client.publish([audioTrack, videoTrack]);
           console.log("[Agora] Successfully published local audio and video tracks!");
 
-          setParticipants(new Map([
-            ["local", {
+          setParticipants((prev) => {
+            const updated = new Map(prev);
+            updated.set("local", {
               id: "local",
               name: user.name,
               stream: new MediaStream([videoTrack.getMediaStreamTrack()]),
@@ -135,13 +136,15 @@ const ConferencePage = ({ user, room, onLeave }) => {
               isAudioOn: isAudioOn,
               isMe: true,
               videoTrack: videoTrack
-            }]
-          ]));
+            });
+            return updated;
+          });
         } catch (mediaErr) {
           console.warn("Could not access camera/mic (likely due to HTTP on mobile). Joining as viewer only.", mediaErr);
           // Set a dummy local participant so the UI doesn't break
-          setParticipants(new Map([
-            ["local", {
+          setParticipants((prev) => {
+            const updated = new Map(prev);
+            updated.set("local", {
               id: "local",
               name: user.name + " (Viewer)",
               stream: null,
@@ -149,8 +152,9 @@ const ConferencePage = ({ user, room, onLeave }) => {
               isAudioOn: false,
               isMe: true,
               videoTrack: null
-            }]
-          ]));
+            });
+            return updated;
+          });
         }
 
       } catch (error) {
