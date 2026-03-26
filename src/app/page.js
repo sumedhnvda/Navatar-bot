@@ -20,6 +20,7 @@ export default function Home() {
   const [existingBotName, setExistingBotName] = useState(""); // name already in DB
   const [loadingHospital, setLoadingHospital] = useState(false);
   const [setupError, setSetupError] = useState("");
+  const [sessionId] = useState(() => Math.random().toString(36).substring(7));
 
   const [botStatus, setBotStatus] = useState("Offline");
   const [activeDoctorName, setActiveDoctorName] = useState(null);
@@ -143,6 +144,7 @@ export default function Home() {
     const id = botId || selectedBotId;
     const hospId = hId || hospitalId;
     const bName = name || botName || `Navatar-${id}`;
+    const sid = sessionId;
 
     if (!id || !hospId) return;
 
@@ -196,6 +198,7 @@ export default function Home() {
         status: currentStatus,
         activeDoctorId: activeDocId,
         activeDoctorName: activeDocName,
+        lastSessionId: sid,
         totalAccesses: 0,
         totalSecondsUsed: 0
       }, { merge: true });
@@ -226,7 +229,11 @@ export default function Home() {
         fetch('/api/bot-status', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ botId: selectedBotId, status: 'Offline' }),
+          body: JSON.stringify({ 
+            botId: selectedBotId, 
+            status: 'Offline',
+            sessionId: sessionId
+          }),
           keepalive: true
         }).catch(() => {});
       }
@@ -236,7 +243,7 @@ export default function Home() {
     return () => {
       window.removeEventListener("beforeunload", handleUnload);
     };
-  }, [setupStep, selectedBotId]);
+  }, [setupStep, selectedBotId, sessionId]);
 
   useEffect(() => {
     if (setupStep !== 2 || !selectedBotId) return;
