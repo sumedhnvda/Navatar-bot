@@ -6,36 +6,23 @@ import { useEffect, useState } from "react";
 const ConferencePage = dynamic(() => import("@/components/ConferencePage"), {
   ssr: false,
 });
-import { CircleUser, Settings, Bot, Loader2 } from "lucide-react";
+import { CircleUser, Settings, Bot } from "lucide-react";
 import { doc, onSnapshot, setDoc, updateDoc, getDoc, collection, query, where, getDocs } from "firebase/firestore";
 import { db } from "@/context/firebase";
 
 export default function Home() {
-  const [setupStep, setSetupStep] = useState(() => {
-    if (typeof window !== 'undefined') {
-      const savedBotId = localStorage.getItem("navatar_botId");
-      const savedHospitalId = localStorage.getItem("navatar_hospitalId");
-      if (savedBotId && savedHospitalId) return 2;
-    }
-    return 0;
-  });
-  const [hospitalId, setHospitalId] = useState(() => (typeof window !== 'undefined' ? (localStorage.getItem("navatar_hospitalId") || "") : ""));
+  const [setupStep, setSetupStep] = useState(0); // 0=hospitalId, 1=selectBot, 2=online
+  const [hospitalId, setHospitalId] = useState("");
   const [hospitalName, setHospitalName] = useState("");
   const [availableBotIds, setAvailableBotIds] = useState([]);
-  const [selectedBotId, setSelectedBotId] = useState(() => (typeof window !== 'undefined' ? (localStorage.getItem("navatar_botId") || "") : ""));
-  const [botName, setBotName] = useState(() => (typeof window !== 'undefined' ? (localStorage.getItem("navatar_botName") || "") : ""));
+  const [selectedBotId, setSelectedBotId] = useState("");
+  const [botName, setBotName] = useState("");
   const [existingBotName, setExistingBotName] = useState(""); // name already in DB
   const [loadingHospital, setLoadingHospital] = useState(false);
   const [setupError, setSetupError] = useState("");
   const [sessionId] = useState(() => Math.random().toString(36).substring(7));
-  const [isRestoring, setIsRestoring] = useState(() => {
-    if (typeof window !== 'undefined') {
-      return !!(localStorage.getItem("navatar_botId") && localStorage.getItem("navatar_hospitalId"));
-    }
-    return false;
-  });
 
-  const [botStatus, setBotStatus] = useState("");
+  const [botStatus, setBotStatus] = useState("Offline");
   const [activeDoctorName, setActiveDoctorName] = useState(null);
   const [activeDoctorPhotoUrl, setActiveDoctorPhotoUrl] = useState(null);
   const [joined, setJoined] = useState(false);
@@ -82,14 +69,16 @@ export default function Home() {
     const savedBotName = localStorage.getItem("navatar_botName");
 
     if (savedBotId && savedHospitalId) {
-      // Fetch hospital name from DB since we skip Step 1 & 2
+      setHospitalId(savedHospitalId);
+      setSelectedBotId(savedBotId);
+      setBotName(savedBotName || "");
+
+      // Fetch hospital name from DB since we skip Step 1
       getDoc(doc(db, "hospitals", savedHospitalId)).then(snap => {
         if (snap.exists()) setHospitalName(snap.data().hospitalName || "Hospital");
       }).catch(() => {});
 
-      goOnline(savedBotId, savedHospitalId, savedBotName || "").finally(() => {
-        setIsRestoring(false);
-      });
+      goOnline(savedBotId, savedHospitalId, savedBotName || "");
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -163,22 +152,8 @@ export default function Home() {
     localStorage.setItem("navatar_hospitalId", hospId);
     localStorage.setItem("navatar_botName", bName);
 
-    // Skip duplicate name check if it's the SAME name as what's already in the DB for this bot
-    // This happens during refresh restoration
-    let nameChanged = true;
-    try {
-      if (existingBotName && bName === existingBotName) {
-        nameChanged = false;
-      } else {
-        const botSnap = await getDoc(doc(db, "navatars", id));
-        if (botSnap.exists() && botSnap.data().name === bName) {
-          nameChanged = false;
-          setExistingBotName(bName);
-        }
-      }
-    } catch (e) {}
-
-    if (nameChanged && bName) {
+    // Check duplicate name within same hospital (only if name was changed / is new)
+    if (bName && bName !== existingBotName) {
       try {
         const q = query(collection(db, "navatars"), where("hospitalId", "==", hospId));
         const snap = await getDocs(q);
@@ -187,7 +162,9 @@ export default function Home() {
           setSetupError(`Another bot in this hospital already has the name "${bName}". Please choose a different name.`);
           return;
         }
-      } catch (e) { }
+      } catch (e) {
+        // Proceed anyway if check fails
+      }
     }
 
     try {
@@ -226,8 +203,8 @@ export default function Home() {
         totalSecondsUsed: 0
       }, { merge: true });
 
-      setBotStatus(currentStatus);
       setSetupStep(2);
+      setBotStatus(currentStatus);
     } catch (err) {
       console.error("Failed to register bot:", err);
       setSetupError("Failed to go online.");
@@ -380,24 +357,6 @@ export default function Home() {
     setAvailableBotIds([]);
     setSetupError("");
   };
-
-  if (isRestoring) {
-    return (
-      <div style={styles.container}>
-        <Loader2 size={48} className="animate-spin" style={{ marginBottom: '20px', color: '#3b82f6' }} />
-        <p style={{ color: '#94a3b8' }}>Restoring Navatar Session...</p>
-        <style jsx>{`
-          .animate-spin {
-            animation: spin 1s linear infinite;
-          }
-          @keyframes spin {
-            from { transform: rotate(0deg); }
-            to { transform: rotate(360deg); }
-          }
-        `}</style>
-      </div>
-    );
-  }
 
   if (setupStep === 0) {
     return (

@@ -17,7 +17,7 @@ export async function POST(request) {
       if (botSnap.exists()) {
         const currentData = botSnap.data();
         if (currentData.lastSessionId && currentData.lastSessionId !== sessionId) {
-          console.log(`[API] IGNORED "Offline" update for Bot:${botId}. Session Mismatch: Request had ${sessionId}, DB has ${currentData.lastSessionId}. This is likely a safe refresh race condition.`);
+          console.log(`[API] Skipping Offline update for ${botId}: Session ID mismatch (got ${sessionId}, current ${currentData.lastSessionId})`);
           return NextResponse.json({ success: true, message: "Ignored stale session cleanup" });
         }
       }
