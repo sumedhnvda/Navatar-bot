@@ -11,29 +11,17 @@ import { doc, onSnapshot, setDoc, updateDoc, getDoc, collection, query, where, g
 import { db } from "@/context/firebase";
 
 export default function Home() {
-  const [setupStep, setSetupStep] = useState(() => {
-    if (typeof window !== 'undefined') {
-      const savedBotId = localStorage.getItem("navatar_botId");
-      const savedHospitalId = localStorage.getItem("navatar_hospitalId");
-      if (savedBotId && savedHospitalId) return 2;
-    }
-    return 0;
-  });
-  const [hospitalId, setHospitalId] = useState(() => (typeof window !== 'undefined' ? (localStorage.getItem("navatar_hospitalId") || "") : ""));
+  const [setupStep, setSetupStep] = useState(0); // 0=hospitalId, 1=selectBot, 2=online
+  const [hospitalId, setHospitalId] = useState("");
   const [hospitalName, setHospitalName] = useState("");
   const [availableBotIds, setAvailableBotIds] = useState([]);
-  const [selectedBotId, setSelectedBotId] = useState(() => (typeof window !== 'undefined' ? (localStorage.getItem("navatar_botId") || "") : ""));
-  const [botName, setBotName] = useState(() => (typeof window !== 'undefined' ? (localStorage.getItem("navatar_botName") || "") : ""));
+  const [selectedBotId, setSelectedBotId] = useState("");
+  const [botName, setBotName] = useState("");
   const [existingBotName, setExistingBotName] = useState(""); // name already in DB
   const [loadingHospital, setLoadingHospital] = useState(false);
   const [setupError, setSetupError] = useState("");
-  const [sessionId] = useState(() => Math.random().toString(36).substring(7));
-  const [isRestoring, setIsRestoring] = useState(() => {
-    if (typeof window !== 'undefined') {
-      return !!(localStorage.getItem("navatar_botId") && localStorage.getItem("navatar_hospitalId"));
-    }
-    return false;
-  });
+  const [sessionId] = useState(() => (typeof window !== 'undefined' ? Math.random().toString(36).substring(7) : ""));
+  const [isRestoring, setIsRestoring] = useState(true);
 
   const [botStatus, setBotStatus] = useState("");
   const [activeDoctorName, setActiveDoctorName] = useState(null);
@@ -82,6 +70,11 @@ export default function Home() {
     const savedBotName = localStorage.getItem("navatar_botName");
 
     if (savedBotId && savedHospitalId) {
+      setSetupStep(2);
+      setHospitalId(savedHospitalId);
+      setSelectedBotId(savedBotId);
+      setBotName(savedBotName || "");
+
       // Fetch hospital name from DB since we skip Step 1 & 2
       getDoc(doc(db, "hospitals", savedHospitalId)).then(snap => {
         if (snap.exists()) setHospitalName(snap.data().hospitalName || "Hospital");
@@ -90,6 +83,8 @@ export default function Home() {
       goOnline(savedBotId, savedHospitalId, savedBotName || "").finally(() => {
         setIsRestoring(false);
       });
+    } else {
+      setIsRestoring(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -475,19 +470,6 @@ export default function Home() {
       <button onClick={handleResetSetup} style={styles.configBtn}><Settings size={18} /> Configure</button>
       <h1 style={{ fontSize: '2.5rem', marginBottom: '10px' }}>{botName || `Navatar-${selectedBotId}`}</h1>
       <p style={{ color: '#94a3b8', marginBottom: '40px' }}>ID: {selectedBotId} | {hospitalName}</p>
-
-      {/* Manual Join Fallback */}
-      <button 
-        onClick={async () => {
-          setJoined(true);
-          try {
-            await updateDoc(doc(db, "navatars", selectedBotId), { status: "Engaged" });
-          } catch(e) {}
-        }} 
-        style={{ ...styles.button, backgroundColor: '#10b981', marginBottom: '30px', padding: '10px 20px', fontSize: '1.1rem' }}
-      >
-        Join Call Manually 📞
-      </button>
       
       {upcomingBookings.length > 0 && (
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '20px' }}>
@@ -498,13 +480,35 @@ export default function Home() {
             ) : (
               <div style={styles.photoPlaceholder}><CircleUser size={32} /></div>
             )}
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', flex: 1 }}>
               <span style={{ color: '#3b82f6', fontSize: '0.8rem', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
                 {countdown && countdown !== "Now" ? `Starts in ${countdown}` : "Starting Soon"}
               </span>
               <h2 style={{ margin: 0, fontSize: '1.4rem' }}>Dr. {upcomingBookings[0].doctorName}</h2>
               <p style={{ margin: 0, color: '#94a3b8', fontSize: '0.9rem' }}>{upcomingBookings[0].date} at {upcomingBookings[0].start_time}</p>
             </div>
+            
+            {/* Manual Join / Fallback Button */}
+            <button
+              onClick={async () => {
+                const nextBooking = upcomingBookings[0];
+                setActiveDoctorName(nextBooking.doctorName);
+                if (nextBooking.doctorPhotoUrl) {
+                  setActiveDoctorPhotoUrl(nextBooking.doctorPhotoUrl);
+                }
+                setJoined(true);
+                try {
+                  await updateDoc(doc(db, "navatars", selectedBotId), { 
+                    status: "Engaged",
+                    activeDoctorId: nextBooking.doctorId || null,
+                    activeDoctorName: nextBooking.doctorName || null 
+                  });
+                } catch(e) {}
+              }}
+              style={{ ...styles.button, backgroundColor: '#10b981', padding: '10px 16px', fontSize: '0.9rem', borderRadius: '8px' }}
+            >
+              Join 📞
+            </button>
           </div>
 
           {/* List of Other Bookings */}
